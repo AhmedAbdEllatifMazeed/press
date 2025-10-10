@@ -49,6 +49,7 @@ class ProxyServer(BaseServer):
 		is_server_setup: DF.Check
 		is_ssh_proxy_setup: DF.Check
 		is_wireguard_setup: DF.Check
+		last_setup_traceback: DF.LongText | None
 		primary: DF.Link | None
 		private_ip: DF.Data | None
 		private_ip_interface_id: DF.Data | None
@@ -143,37 +144,58 @@ class ProxyServer(BaseServer):
 			kibana_password = None
 
 		try:
-			ansible = Ansible(
-				playbook="self_hosted_proxy.yml" if getattr(self, "is_self_hosted", False) else "proxy.yml",
-				server=self,
-				user=self.ssh_user or "root",
-				port=self.ssh_port or 22,
-				variables={
-					"server": self.name,
-					"workers": 1,
-					"domain": self.domain,
-					"agent_password": agent_password,
-					"agent_repository_url": agent_repository_url,
-					"monitoring_password": monitoring_password,
-					"log_server": log_server,
-					"kibana_password": kibana_password,
-					"certificate_private_key": certificate.private_key,
-					"certificate_full_chain": certificate.full_chain,
-					"certificate_intermediate_chain": certificate.intermediate_chain,
-					"press_url": frappe.utils.get_url(),
-				},
-			)
-			play = ansible.run()
-			self.reload()
-			if play.status == "Success":
-				self.status = "Active"
-				self.is_server_setup = True
-			else:
-				self.status = "Broken"
-		except Exception:
-			self.status = "Broken"
-			log_error("Proxy Server Setup Exception", server=self.as_dict())
-		self.save()
+		        ansible = Ansible(
+		                playbook="self_hosted_proxy.yml" if getattr(self, "is_self_hosted", False) else "proxy.yml",
+		                server=self,
+		                user=self.ssh_user or "root",
+		                port=self.ssh_port or 22,
+		                variables={
+		                        "server": self.name,
+		                        "workers": 1,
+		                        "domain": self.domain,
+		                        "agent_password": agent_password,
+		                        "agent_repository_url": agent_repository_url,
+		                        "monitoring_password": monitoring_password,
+		                        "log_server": log_server,
+		                        "kibana_password": kibana_password,
+		                        "certificate_private_key": certificate.private_key,
+		                        "certificate_full_chain": certificate.full_chain,
+		                        "certificate_intermediate_chain": certificate.intermediate_chain,
+		                        "press_url": frappe.utils.get_url(),
+		                },
+		        )
+		        play = ansible.run()
+		        self.reload()
+		        if play.status == "Success":
+		                self.status = "Active"
+		                self.is_server_setup = True
+		                self.last_setup_traceback = None
+		        else:
+		                self.status = "Broken"
+		except Exception as exc:
+		        self.status = "Broken"
+		        error_message = (
+		                frappe.get_traceback(with_context=True)
+		                or str(exc)
+		                or "Proxy Server setup failed"
+		        )
+		        self.last_setup_traceback = error_message
+		        frappe.db.set_value(
+		                self.doctype,
+		                self.name,
+		                {"status": "Broken", "last_setup_traceback": error_message},
+		        )
+		        log_error(
+		                "Proxy Server Setup Exception",
+		                server=self.as_dict(),
+		                error_message=str(exc),
+		                traceback=error_message,
+		        )
+		        raise frappe.ValidationError(
+		                f"Failed to setup Proxy Server {self.name}: {exc}"
+		        ) from exc
+		else:
+		        self.save()
 
 	def _install_exporters(self):
 		monitoring_password = frappe.get_doc("Cluster", self.cluster).get_password("monitoring_password")
