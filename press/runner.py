@@ -209,7 +209,7 @@ def _log_runner_step(identifier: str, level: str, message: str, *args) -> None:
 
 
 class Ansible:
-        def __init__(self, server, playbook, user="root", variables=None, port=22):
+        def __init__(self, server, playbook, user="ubuntu", variables=None, port=22):
                 self.server = server
                 self.playbook = playbook
                 self.playbook_path = frappe.get_app_path("press", "playbooks", self.playbook)
