@@ -1,4 +1,5 @@
 import json
+from contextlib import suppress
 from pathlib import Path
 
 import frappe
@@ -184,19 +185,15 @@ def _clear_runner_log(identifier: str) -> None:
                 return
 
         if log_path.exists():
-                try:
+                with suppress(Exception):
                         log_path.unlink()
-                except Exception:
-                        pass
 
 
 def _append_runner_log(identifier: str, line: str) -> None:
-        try:
+        with suppress(Exception):
                 log_path = _get_runner_log_path(identifier)
                 with log_path.open("a", encoding="utf-8") as log_file:
                         log_file.write(line + "\n")
-        except Exception:
-                pass
 
 
 def _log_runner_step(identifier: str, level: str, message: str, *args) -> None:
