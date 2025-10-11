@@ -130,165 +130,74 @@ class ProxyServer(BaseServer):
 		wildcards = self.get_wildcard_domains()
 		agent.setup_wildcard_hosts(wildcards)
 
-        def _setup_server(self):
-                self._clear_setup_log()
-                self._log_step("step", "Starting Proxy Server setup for %s", self.name)
-                self._log_step("info", "Fetching configuration for Proxy Server %s", self.name)
-                agent_password = self.get_password("agent_password")
-                agent_repository_url = self.get_agent_repository_url()
-                self._log_step(
-                        "info",
-                        "Retrieving wildcard TLS certificate for domain %s on Proxy Server %s",
-                        self.domain,
-                        self.name,
-                )
-                certificate_name = frappe.db.get_value(
-                        "TLS Certificate", {"wildcard": True, "domain": self.domain}, "name"
-                )
-                certificate = frappe.get_doc("TLS Certificate", certificate_name)
-                self._log_step(
-                        "info",
-                        "Retrieved TLS certificate %s for Proxy Server %s",
-                        certificate_name,
-                        self.name,
-                )
-                monitoring_password = frappe.get_doc("Cluster", self.cluster).get_password("monitoring_password")
-                self._log_step(
-                        "info",
-                        "Retrieved monitoring credentials for cluster %s on Proxy Server %s",
-                        self.cluster,
-                        self.name,
-                )
+	def _setup_server(self):
+		agent_password = self.get_password("agent_password")
+		agent_repository_url = self.get_agent_repository_url()
+		certificate_name = frappe.db.get_value(
+			"TLS Certificate", {"wildcard": True, "domain": self.domain}, "name"
+		)
+		certificate = frappe.get_doc("TLS Certificate", certificate_name)
+		monitoring_password = frappe.get_doc("Cluster", self.cluster).get_password("monitoring_password")
 
-                try:
-                        playbook_name = (
-                                "self_hosted_proxy.yml"
-                                if getattr(self, "is_self_hosted", False)
-                                else "proxy.yml"
-                        )
-                        self._log_step(
-                                "step",
-                                "Preparing Ansible playbook %s for Proxy Server %s",
-                                playbook_name,
-                                self.name,
-                        )
-                        ansible = Ansible(
-                                playbook=playbook_name,
-                                server=self,
-                                user=self.ssh_user or "root",
-                                port=self.ssh_port or 22,
-                                variables={
-                                        "server": self.name,
-                                        "workers": 1,
-                                        "domain": self.domain,
-                                        "agent_password": agent_password,
-                                        "agent_repository_url": agent_repository_url,
-                                        "monitoring_password": monitoring_password,
-                                        "certificate_private_key": certificate.private_key,
-                                        "certificate_full_chain": certificate.full_chain,
-                                        "certificate_intermediate_chain": certificate.intermediate_chain,
-                                        "press_url": frappe.utils.get_url(),
-                                },
-                        )
-                        self._log_step(
-                                "step",
-                                "Executing Ansible playbook %s for Proxy Server %s",
-                                playbook_name,
-                                self.name,
-                        )
-                        play = ansible.run()
-                        self._log_step(
-                                "info",
-                                "Ansible playbook %s completed with status %s for Proxy Server %s",
-                                playbook_name,
-                                getattr(play, "status", None),
-                                self.name,
-                        )
-                        self.reload()
-                        if play.status == "Success":
-                                self.status = "Active"
-                                self.is_server_setup = True
-                                self.last_setup_traceback = None
-                                self._log_step(
-                                        "info",
-                                        "Proxy Server %s setup completed successfully",
-                                        self.name,
-                                )
-                        else:
-                                self.status = "Broken"
-                                self._log_step(
-                                        "error",
-                                        "Proxy Server %s setup returned non-success status %s",
-                                        self.name,
-                                        play.status,
-                                )
-                except Exception as exc:
-                        error_message = (
-                                frappe.get_traceback(with_context=True)
-                                or str(exc)
-                                or "Proxy Server setup failed"
-                        )
-                        self._log_step(
-                                "error",
-                                "Proxy Server %s setup failed due to exception: %s",
-                                self.name,
-                                error_message,
-                        )
-                        self.status = "Broken"
-                        self.is_server_setup = False
-                        self.last_setup_traceback = error_message
-                        self.db_set("status", "Broken", update_modified=True)
-                        self.db_set("is_server_setup", 0, update_modified=False)
-                        self.db_set("last_setup_traceback", error_message, update_modified=False)
-                        log_error(
-                                "Proxy Server Setup Exception",
-                                server=self.as_dict(),
-                                error_message=str(exc),
-                                traceback=error_message,
-                                reference_doctype=self.doctype,
-                                reference_name=self.name,
-                        )
-                        raise frappe.ValidationError(
-                                f"Failed to setup Proxy Server {self.name}:\n{error_message}"
-                        ) from exc
-                else:
-                        self._log_step("info", "Persisting Proxy Server %s after setup", self.name)
-                        self.save()
+		log_server = frappe.db.get_single_value("Press Settings", "log_server")
+		if log_server:
+			kibana_password = frappe.get_doc("Log Server", log_server).get_password("kibana_password")
+		else:
+			kibana_password = None
 
-        def _clear_setup_log(self):
-                try:
-                        log_path = self._get_setup_log_path()
-                except Exception:
-                        return
-
-                if log_path.exists():
-                        try:
-                                log_path.unlink()
-                        except Exception:
-                                pass
-
-        def _get_setup_log_path(self) -> Path:
-                logs_dir = Path(frappe.get_site_path("logs"))
-                logs_dir.mkdir(parents=True, exist_ok=True)
-                safe_name = frappe.scrub(self.name)
-                return logs_dir / f"proxy_server_setup_{safe_name}.log"
-
-        def _log_step(self, level: str, message: str, *args) -> None:
-                try:
-                        formatted_message = message % args if args else message
-                except TypeError:
-                        formatted_message = message
-
-                timestamp = now_datetime().isoformat()
-                line = f"{timestamp} [{level.upper()}] {formatted_message}"
-                print(line)
-
-                try:
-                        log_path = self._get_setup_log_path()
-                        with log_path.open("a", encoding="utf-8") as log_file:
-                                log_file.write(line + "\n")
-                except Exception:
-                        pass
+		try:
+		        ansible = Ansible(
+		                playbook="self_hosted_proxy.yml" if getattr(self, "is_self_hosted", False) else "proxy.yml",
+		                server=self,
+		                user=self.ssh_user or "root",
+		                port=self.ssh_port or 22,
+		                variables={
+		                        "server": self.name,
+		                        "workers": 1,
+		                        "domain": self.domain,
+		                        "agent_password": agent_password,
+		                        "agent_repository_url": agent_repository_url,
+		                        "monitoring_password": monitoring_password,
+		                        "log_server": log_server,
+		                        "kibana_password": kibana_password,
+		                        "certificate_private_key": certificate.private_key,
+		                        "certificate_full_chain": certificate.full_chain,
+		                        "certificate_intermediate_chain": certificate.intermediate_chain,
+		                        "press_url": frappe.utils.get_url(),
+		                },
+		        )
+		        play = ansible.run()
+		        self.reload()
+		        if play.status == "Success":
+		                self.status = "Active"
+		                self.is_server_setup = True
+		                self.last_setup_traceback = None
+		        else:
+		                self.status = "Broken"
+		except Exception as exc:
+		        self.status = "Broken"
+		        error_message = (
+		                frappe.get_traceback(with_context=True)
+		                or str(exc)
+		                or "Proxy Server setup failed"
+		        )
+		        self.last_setup_traceback = error_message
+		        frappe.db.set_value(
+		                self.doctype,
+		                self.name,
+		                {"status": "Broken", "last_setup_traceback": error_message},
+		        )
+		        log_error(
+		                "Proxy Server Setup Exception",
+		                server=self.as_dict(),
+		                error_message=str(exc),
+		                traceback=error_message,
+		        )
+		        raise frappe.ValidationError(
+		                f"Failed to setup Proxy Server {self.name}: {exc}"
+		        ) from exc
+		else:
+		        self.save()
 
 	def _install_exporters(self):
 		monitoring_password = frappe.get_doc("Cluster", self.cluster).get_password("monitoring_password")
