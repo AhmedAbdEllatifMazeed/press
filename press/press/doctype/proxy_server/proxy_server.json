@@ -6,6 +6,7 @@
  "engine": "InnoDB",
  "field_order": [
   "status",
+  "last_setup_traceback",
   "hostname",
   "hostname_abbreviation",
   "domain",
@@ -97,6 +98,12 @@
    "options": "Pending\nInstalling\nActive\nBroken\nArchived",
    "read_only": 1,
    "reqd": 1
+  },
+  {
+   "fieldname": "last_setup_traceback",
+   "fieldtype": "Long Text",
+   "label": "Last Setup Traceback",
+   "read_only": 1
   },
   {
    "default": "0",
@@ -433,7 +440,7 @@
   }
  ],
  "links": [],
- "modified": "2025-06-13 12:52:19.785213",
+ "modified": "2025-10-10 12:41:08.477871",
  "modified_by": "Administrator",
  "module": "Press",
  "name": "Proxy Server",
