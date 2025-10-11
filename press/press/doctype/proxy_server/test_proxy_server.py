@@ -13,6 +13,7 @@ from press.press.doctype.agent_job.test_agent_job import fake_agent_job
 from press.press.doctype.press_settings.test_press_settings import (
 	create_test_press_settings,
 )
+from press.press.doctype.proxy_server import proxy_server
 from press.press.doctype.proxy_server.proxy_server import ProxyServer
 from press.press.doctype.root_domain.root_domain import RootDomain
 from press.press.doctype.server.server import BaseServer
@@ -93,3 +94,26 @@ class TestProxyServer(FrappeTestCase):
 		self.assertFalse(proxy1.is_primary)
 		self.assertEqual(proxy2.status, "Active")
 		self.assertEqual(proxy1.status, "Active")
+
+	def test_setup_server_logs_and_raises(self):
+		proxy = create_test_proxy_server()
+		ansible = proxy_server.Ansible
+		ansible.return_value.run.side_effect = RuntimeError("ansible boom")
+
+		with patch("press.press.doctype.proxy_server.proxy_server.log_error") as log_error:
+			with patch.object(ProxyServer, "_log_step") as setup_logger:
+				with self.assertRaises(frappe.ValidationError) as exc_info:
+					proxy._setup_server()
+
+		self.assertIn("ansible boom", str(exc_info.exception))
+		log_error.assert_called_once()
+		self.assertIn("ansible boom", log_error.call_args.kwargs["traceback"])
+		error_calls = [call for call in setup_logger.call_args_list if call.args[1] == "error"]
+		self.assertTrue(error_calls)
+		self.assertTrue(any("ansible boom" in call.args[-1] for call in error_calls))
+		self.assertGreaterEqual(len(setup_logger.call_args_list), 1)
+
+		proxy.reload()
+		self.assertEqual(proxy.status, "Broken")
+		self.assertTrue(proxy.last_setup_traceback)
+		self.assertIn("ansible boom", proxy.last_setup_traceback)
