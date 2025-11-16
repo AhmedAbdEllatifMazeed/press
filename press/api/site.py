@@ -15,7 +15,7 @@ from dns.resolver import Resolver
 from frappe.core.utils import find
 from frappe.desk.doctype.tag.tag import add_tag
 from frappe.rate_limiter import rate_limit
-from frappe.utils import flt, sbool, time_diff_in_hours
+from frappe.utils import cint, flt, sbool, time_diff_in_hours
 from frappe.utils.password import get_decrypted_password
 from frappe.utils.user import is_system_user
 
@@ -1651,12 +1651,46 @@ def validate_restoration_space_requirements(
 	}
 
 
-@frappe.whitelist(allow_guest=True)
-@rate_limit(limit=10, seconds=60)
-def exists(subdomain, domain):
-	from press.press.doctype.site.site import Site
+SUBDOMAIN_EXISTS_RATE_LIMIT = 60
+SUBDOMAIN_EXISTS_RATE_WINDOW_SECONDS = 60
 
-	return Site.exists(subdomain, domain)
+
+def _enforce_subdomain_exists_rate_limit():
+        """Rate limit based on the request IP instead of the session user."""
+
+        cache = frappe.cache()
+        if not cache:
+                return
+
+        request_ip = getattr(frappe.local, "request_ip", None)
+        rate_limit_key = request_ip or frappe.session.user
+        cache_key = f"subdomain-exists:{rate_limit_key}"
+        current_count = cint(cache.get_value(cache_key))
+
+        if current_count >= SUBDOMAIN_EXISTS_RATE_LIMIT:
+                frappe.throw(
+                        "You hit the rate limit because of too many requests. Please try after sometime.",
+                        frappe.exceptions.RateLimitExceededError,
+                )
+
+        new_count = cache.incr(cache_key)
+        if new_count == 1:
+                cache.expire(cache_key, SUBDOMAIN_EXISTS_RATE_WINDOW_SECONDS)
+
+
+@frappe.whitelist(allow_guest=True)
+# The subdomain availability check is triggered from the dashboard while the
+# user is typing in the "Subdomain" field. The default rate limit decorator keys
+# lookups by session user, which collapses all guest users into the same bucket
+# and leads to `RateLimitExceededError` even if the current user is idle. Apply a
+# custom limiter that keys requests by IP to keep the endpoint protected without
+# throttling legitimate traffic.
+def exists(subdomain, domain):
+        from press.press.doctype.site.site import Site
+
+        _enforce_subdomain_exists_rate_limit()
+
+        return Site.exists(subdomain, domain)
 
 
 @frappe.whitelist()
