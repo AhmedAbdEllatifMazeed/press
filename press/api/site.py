@@ -1652,7 +1652,7 @@ def validate_restoration_space_requirements(
 
 
 @frappe.whitelist(allow_guest=True)
-@rate_limit(limit=10, seconds=60)
+@rate_limit(limit=120, seconds=60)
 def exists(subdomain, domain):
 	from press.press.doctype.site.site import Site
 
