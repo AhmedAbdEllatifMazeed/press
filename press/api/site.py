@@ -15,7 +15,7 @@ from dns.resolver import Resolver
 from frappe.core.utils import find
 from frappe.desk.doctype.tag.tag import add_tag
 from frappe.rate_limiter import rate_limit
-from frappe.utils import flt, sbool, time_diff_in_hours
+from frappe.utils import cint, flt, sbool, time_diff_in_hours
 from frappe.utils.password import get_decrypted_password
 from frappe.utils.user import is_system_user
 
@@ -62,6 +62,7 @@ if TYPE_CHECKING:
 
 
 NAMESERVERS = ["1.1.1.1", "1.0.0.1", "8.8.8.8", "8.8.4.4"]
+MAX_AGENT_JOBS_TO_FETCH = 500
 
 
 def protected(doctypes):
@@ -333,11 +334,15 @@ def get_app_subscriptions(app_plans, team: str):
 @frappe.whitelist()
 @protected("Site")
 def jobs(filters=None, order_by=None, limit_start=None, limit_page_length=None):
-	jobs = frappe.get_all(
-		"Agent Job",
-		fields=["name", "job_type", "creation", "status", "start", "end", "duration"],
-		filters=filters,
-		start=limit_start,
+        limit_page_length = cint(limit_page_length or MAX_AGENT_JOBS_TO_FETCH)
+        limit_page_length = min(limit_page_length, MAX_AGENT_JOBS_TO_FETCH)
+        limit_start = cint(limit_start) if limit_start else 0
+
+        jobs = frappe.get_all(
+                "Agent Job",
+                fields=["name", "job_type", "creation", "status", "start", "end", "duration"],
+                filters=filters,
+                start=limit_start,
 		limit=limit_page_length,
 		order_by=order_by or "creation desc",
 	)
