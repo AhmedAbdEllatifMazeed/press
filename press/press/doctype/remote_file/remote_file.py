@@ -259,20 +259,25 @@ def delete_s3_files(buckets):
 	from press.utils import chunk
 
 	press_settings = frappe.get_single("Press Settings")
-	for bucket_name in buckets:
-		s3 = resource(
-			"s3",
-			aws_access_key_id=press_settings.offsite_backups_access_key_id,
-			aws_secret_access_key=press_settings.get_password(
-				"offsite_backups_secret_access_key", raise_exception=False
-			),
-			endpoint_url=frappe.db.get_value("Backup Bucket", bucket_name, "endpoint_url")
-			or "https://s3.amazonaws.com",
-		)
-		bucket = s3.Bucket(bucket_name)
-		for objects in chunk([{"Key": x} for x in buckets[bucket_name]], 1000):
-			response = bucket.delete_objects(Delete={"Objects": objects})
-			response = pprint.pformat(response)
-			frappe.get_doc(
-				doctype="Remote Operation Log", operation_type="Delete Files", response=response
-			).insert()
+        for bucket_name in buckets:
+                bucket_region = frappe.db.get_value("Backup Bucket", bucket_name, "region")
+                # Use the bucket's configured region so boto generates a region-correct endpoint
+                # instead of defaulting to us-east-1 (which raises IllegalLocationConstraintException
+                # for buckets created in other regions).
+                s3 = resource(
+                        "s3",
+                        aws_access_key_id=press_settings.offsite_backups_access_key_id,
+                        aws_secret_access_key=press_settings.get_password(
+                                "offsite_backups_secret_access_key", raise_exception=False
+                        ),
+                        region_name=bucket_region,
+                        endpoint_url=frappe.db.get_value("Backup Bucket", bucket_name, "endpoint_url")
+                        or "https://s3.amazonaws.com",
+                )
+                bucket = s3.Bucket(bucket_name)
+                for objects in chunk([{"Key": x} for x in buckets[bucket_name]], 1000):
+                        response = bucket.delete_objects(Delete={"Objects": objects})
+                        response = pprint.pformat(response)
+                        frappe.get_doc(
+                                doctype="Remote Operation Log", operation_type="Delete Files", response=response
+                        ).insert()
