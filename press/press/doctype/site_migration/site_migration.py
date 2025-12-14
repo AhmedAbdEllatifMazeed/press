@@ -223,9 +223,9 @@ class SiteMigration(Document):
 			source_db = frappe.db.get_value("Server", self.source_server, "database_server")
 			destination_db = frappe.db.get_value("Server", self.destination_server, "database_server")
 			if source_db == destination_db:
-				raise NotImplementedError
-				# TODO: switch order of steps here (archive before restore)
-			self.add_steps_for_server_migration()
+				self.add_steps_for_server_migration_same_database()
+			else:
+				self.add_steps_for_server_migration()
 			self.add_steps_for_user_defined_domains()
 		else:
 			# TODO: Call site update for bench only migration with popup with link to site update job
@@ -558,6 +558,62 @@ class SiteMigration(Document):
 			{
 				"step_title": self.remove_site_from_source_proxy.__doc__,
 				"method_name": self.remove_site_from_source_proxy.__name__,
+				"status": "Pending",
+			},
+			{
+				"step_title": self.restore_site_on_destination_proxy.__doc__,
+				"method_name": self.restore_site_on_destination_proxy.__name__,
+				"status": "Pending",
+			},
+			{
+				"step_title": self.update_site_record_fields.__doc__,
+				"method_name": self.update_site_record_fields.__name__,
+				"status": "Pending",
+			},
+			{
+				"step_title": self.reset_site_status_on_destination.__doc__,
+				"method_name": self.reset_site_status_on_destination.__name__,
+				"status": "Pending",
+			},
+			{
+				"step_title": self.adjust_plan_if_required.__doc__,
+				"method_name": self.adjust_plan_if_required.__name__,
+				"status": "Pending",
+			},
+		]
+		for step in steps:
+			self.append("steps", step)
+
+	def add_steps_for_server_migration_same_database(self):
+		"""Server migration when source and destination share the same database server.
+
+		Archive the site on the source before restoring it on the destination to avoid
+		conflicts on the shared DB server.
+		"""
+		steps = [
+			{
+				"step_title": self.deactivate_site_on_source_server.__doc__,
+				"method_name": self.deactivate_site_on_source_server.__name__,
+				"status": "Pending",
+			},
+			{
+				"step_title": self.backup_source_site.__doc__,
+				"method_name": self.backup_source_site.__name__,
+				"status": "Pending",
+			},
+			{
+				"step_title": self.archive_site_on_source.__doc__,
+				"method_name": self.archive_site_on_source.__name__,
+				"status": "Pending",
+			},
+			{
+				"step_title": self.remove_site_from_source_proxy.__doc__,
+				"method_name": self.remove_site_from_source_proxy.__name__,
+				"status": "Pending",
+			},
+			{
+				"step_title": self.restore_site_on_destination_server.__doc__,
+				"method_name": self.restore_site_on_destination_server.__name__,
 				"status": "Pending",
 			},
 			{
