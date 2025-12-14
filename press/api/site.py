@@ -1652,6 +1652,7 @@ def validate_restoration_space_requirements(
 
 
 @frappe.whitelist(allow_guest=True)
+# Allow enough lookups while typing subdomains in the dashboard UI
 @rate_limit(limit=120, seconds=60)
 def exists(subdomain, domain):
 	from press.press.doctype.site.site import Site

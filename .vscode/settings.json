@@ -1,5 +1,6 @@
 {
     "path-intellisense.mappings": {
         "@": "${workspaceRoot}/dashboard/src"
-    }
+    },
+    "ansible.python.interpreterPath": "/opt/homebrew/bin/python3"
 }
