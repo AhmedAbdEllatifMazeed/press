@@ -44,9 +44,7 @@ def poll_file_statuses():
             "secret_access_key": aws_secret_key,
         },
         {
-            "name": frappe.db.get_single_value(
-                "Press Settings", "remote_uploads_bucket"
-            ),
+            "name": frappe.db.get_single_value("Press Settings", "remote_uploads_bucket"),
             "region": default_region,
             "access_key_id": frappe.db.get_single_value(
                 "Press Settings", "remote_access_key_id"
@@ -135,9 +133,7 @@ def delete_remote_backup_objects(remote_files):
         return None
 
     buckets = {bucket: [] for bucket in frappe.get_all("Backup Bucket", pluck="name")}
-    buckets.update(
-        {frappe.db.get_single_value("Press Settings", "aws_s3_bucket"): []}
-    )
+    buckets.update({frappe.db.get_single_value("Press Settings", "aws_s3_bucket"): []})
 
     for file_path, bucket in frappe.db.get_values(
         "Remote File",
@@ -156,16 +152,25 @@ def delete_remote_backup_objects(remote_files):
 
 
 def get_s3_client(access_key_id, secret_access_key, region_name):
-    """Return an S3 client that always uses the regional endpoint."""
-    endpoint_url = f"https://s3.{region_name}.amazonaws.com" if region_name else None
+    """
+    Return an S3 client that generates regional (virtual-hosted style) endpoints.
 
+    This is required so presigned URLs match:
+      https://<bucket>.s3.<region>.amazonaws.com/<key>?X-Amz-...
+
+    and do NOT use:
+      https://<bucket>.s3.amazonaws.com/<key>?X-Amz-...
+    """
     return client(
         "s3",
         aws_access_key_id=access_key_id,
         aws_secret_access_key=secret_access_key,
         region_name=region_name,
-        endpoint_url=endpoint_url,
-        config=Config(signature_version="s3v4"),
+        endpoint_url=f"https://s3.{region_name}.amazonaws.com",
+        config=Config(
+            signature_version="s3v4",
+            s3={"addressing_style": "virtual"},
+        ),
     )
 
 
@@ -191,26 +196,21 @@ class RemoteFile(Document):
         if not self.bucket:
             return None
 
-        if self.bucket == frappe.db.get_single_value(
-            "Press Settings", "remote_uploads_bucket"
-        ):
-            access_key_id = frappe.db.get_single_value(
-                "Press Settings", "remote_access_key_id"
-            )
+        if self.bucket == frappe.db.get_single_value("Press Settings", "remote_uploads_bucket"):
+            access_key_id = frappe.db.get_single_value("Press Settings", "remote_access_key_id")
             secret_access_key = get_decrypted_password(
                 "Press Settings", "Press Settings", "remote_secret_access_key"
             )
         else:
-            access_key_id = frappe.db.get_single_value(
-                "Press Settings", "offsite_backups_access_key_id"
-            )
+            access_key_id = frappe.db.get_single_value("Press Settings", "offsite_backups_access_key_id")
             secret_access_key = get_decrypted_password(
                 "Press Settings", "Press Settings", "offsite_backups_secret_access_key"
             )
 
-        region_name = frappe.db.get_value(
-            "Backup Bucket", self.bucket, "region"
-        ) or frappe.db.get_single_value("Press Settings", "backup_region")
+        region_name = (
+            frappe.db.get_value("Backup Bucket", self.bucket, "region")
+            or frappe.db.get_single_value("Press Settings", "backup_region")
+        )
 
         return get_s3_client(access_key_id, secret_access_key, region_name)
 
@@ -222,7 +222,8 @@ class RemoteFile(Document):
     def exists(self):
         self.db_set("status", "Available")
 
-        if self.url:
+        # If an external URL is stored, validate via HEAD
+        if self.url and "amazonaws.com" not in (self.url or ""):
             success = str(requests.head(self.url).status_code).startswith("2")
             if success:
                 return True
@@ -231,9 +232,7 @@ class RemoteFile(Document):
             return False
 
         try:
-            self.s3_client.head_object(
-                Bucket=self.bucket, Key=self.file_path
-            )
+            self.s3_client.head_object(Bucket=self.bucket, Key=self.file_path)
             return True
         except Exception:
             self.db_set("status", "Unavailable")
@@ -243,9 +242,7 @@ class RemoteFile(Document):
     def delete_remote_object(self):
         self.db_set("status", "Unavailable")
         return self.s3_client.delete_object(
-            Bucket=frappe.db.get_single_value(
-                "Press Settings", "remote_uploads_bucket"
-            ),
+            Bucket=frappe.db.get_single_value("Press Settings", "remote_uploads_bucket"),
             Key=self.file_path,
         )
 
@@ -254,38 +251,46 @@ class RemoteFile(Document):
 
     @frappe.whitelist()
     def get_download_link(self):
-        return self.url or self.s3_client.generate_presigned_url(
+        """
+        Prefer generating a fresh regional presigned URL for S3 objects.
+
+        Only return self.url if it's an external/non-S3 URL. This prevents reusing old
+        stored S3 URLs that might be using the global endpoint (s3.amazonaws.com),
+        which would cause SignatureDoesNotMatch in regions like me-central-1.
+        """
+        if self.url and "amazonaws.com" not in (self.url or ""):
+            return self.url
+
+        return self.s3_client.generate_presigned_url(
             "get_object",
             Params={"Bucket": self.bucket, "Key": self.file_path},
-            ExpiresIn=frappe.db.get_single_value(
-                "Press Settings", "remote_link_expiry"
-            )
-            or 3600,
+            ExpiresIn=frappe.db.get_single_value("Press Settings", "remote_link_expiry") or 3600,
         )
 
     def get_content(self):
-        if self.url:
+        # If an external URL is stored, use it
+        if self.url and "amazonaws.com" not in (self.url or ""):
             return json.loads(requests.get(self.url).content)
 
-        obj = self.s3_client.get_object(
-            Bucket=self.bucket, Key=self.file_path
-        )
+        obj = self.s3_client.get_object(Bucket=self.bucket, Key=self.file_path)
         return json.loads(obj["Body"].read().decode("utf-8"))
 
     @property
     def size(self) -> int:
-        """Get the size of file in bytes"""
+        """Get the size of file in bytes."""
         if int(self.file_size or 0):
             return int(self.file_size)
 
-        response = requests.head(self.url)
+        # Prefer presigned URL HEAD for S3; for external URL, it still works.
+        url = self.get_download_link()
+        response = requests.head(url)
         self.file_size = int(response.headers.get("content-length", 0))
         self.save()
         return int(self.file_size)
 
 
 def delete_s3_files(buckets):
-    """Delete specified files from s3 buckets"""
+    """Delete specified files from s3 buckets."""
     from press.utils import chunk
 
     press_settings = frappe.get_single("Press Settings")
@@ -295,14 +300,9 @@ def delete_s3_files(buckets):
         if not keys:
             continue
 
-        # Use the bucket's configured region so boto generates a region-correct endpoint
-        # instead of defaulting to us-east-1 (IllegalLocationConstraintException for other regions).
-        endpoint_url = frappe.db.get_value(
-            "Backup Bucket", bucket_name, "endpoint_url"
-        )
+        endpoint_url = frappe.db.get_value("Backup Bucket", bucket_name, "endpoint_url")
         region_name = (
-            frappe.db.get_value("Backup Bucket", bucket_name, "region")
-            or default_region
+            frappe.db.get_value("Backup Bucket", bucket_name, "region") or default_region
         )
 
         s3 = resource(
