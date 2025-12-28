@@ -9,6 +9,7 @@ import pprint
 import frappe
 import requests
 from boto3 import client, resource
+from botocore.config import Config
 from frappe.model.document import Document
 from frappe.utils.password import get_decrypted_password
 
@@ -154,6 +155,20 @@ def delete_remote_backup_objects(remote_files):
     return remote_files
 
 
+def get_s3_client(access_key_id, secret_access_key, region_name):
+    """Return an S3 client that always uses the regional endpoint."""
+    endpoint_url = f"https://s3.{region_name}.amazonaws.com" if region_name else None
+
+    return client(
+        "s3",
+        aws_access_key_id=access_key_id,
+        aws_secret_access_key=secret_access_key,
+        region_name=region_name,
+        endpoint_url=endpoint_url,
+        config=Config(signature_version="s3v4"),
+    )
+
+
 class RemoteFile(Document):
     # begin: auto-generated types
     from typing import TYPE_CHECKING
@@ -193,15 +208,11 @@ class RemoteFile(Document):
                 "Press Settings", "Press Settings", "offsite_backups_secret_access_key"
             )
 
-        return client(
-            "s3",
-            aws_access_key_id=access_key_id,
-            aws_secret_access_key=secret_access_key,
-            region_name=frappe.db.get_value(
-                "Backup Bucket", self.bucket, "region"
-            )
-            or frappe.db.get_single_value("Press Settings", "backup_region"),
-        )
+        region_name = frappe.db.get_value(
+            "Backup Bucket", self.bucket, "region"
+        ) or frappe.db.get_single_value("Press Settings", "backup_region")
+
+        return get_s3_client(access_key_id, secret_access_key, region_name)
 
     @property
     def download_link(self):

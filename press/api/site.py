@@ -9,7 +9,6 @@ import dns.exception
 import frappe
 import requests
 import wrapt
-from boto3 import client
 from botocore.exceptions import ClientError
 from dns.resolver import Resolver
 from frappe.core.utils import find
@@ -33,7 +32,7 @@ from press.press.doctype.marketplace_app.marketplace_app import (
 	get_plans_for_app,
 	get_total_installs_by_app,
 )
-from press.press.doctype.remote_file.remote_file import get_remote_key
+from press.press.doctype.remote_file.remote_file import get_remote_key, get_s3_client
 from press.press.doctype.server.server import is_dedicated_server
 from press.press.doctype.site_plan.plan import Plan
 from press.press.doctype.site_update.site_update import benches_with_available_update
@@ -1998,14 +1997,14 @@ def get_upload_link(file, parts=1):
 	expiration = frappe.db.get_single_value("Press Settings", "remote_link_expiry") or 3600
 	object_name = get_remote_key(file)
 	parts = int(parts)
+	region_name = frappe.db.get_single_value("Press Settings", "backup_region") or "ap-south-1"
 
-	s3_client = client(
-		"s3",
+	s3_client = get_s3_client(
 		aws_access_key_id=frappe.db.get_single_value("Press Settings", "remote_access_key_id"),
 		aws_secret_access_key=get_decrypted_password(
 			"Press Settings", "Press Settings", "remote_secret_access_key"
 		),
-		region_name="ap-south-1",
+		region_name=region_name,
 	)
 	try:
 		# The response contains the presigned URL and required fields
@@ -2038,8 +2037,8 @@ def get_upload_link(file, parts=1):
 @frappe.whitelist()
 def multipart_exit(file, id, action, parts=None):
 	bucket_name = frappe.db.get_single_value("Press Settings", "remote_uploads_bucket")
-	s3_client = client(
-		"s3",
+	region_name = frappe.db.get_single_value("Press Settings", "backup_region") or "ap-south-1"
+	s3_client = get_s3_client(
 		aws_access_key_id=frappe.db.get_single_value("Press Settings", "remote_access_key_id"),
 		aws_secret_access_key=get_decrypted_password(
 			"Press Settings",
@@ -2047,7 +2046,7 @@ def multipart_exit(file, id, action, parts=None):
 			"remote_secret_access_key",
 			raise_exception=False,
 		),
-		region_name="ap-south-1",
+		region_name=region_name,
 	)
 	if action == "abort":
 		response = s3_client.abort_multipart_upload(Bucket=bucket_name, Key=file, UploadId=id)
