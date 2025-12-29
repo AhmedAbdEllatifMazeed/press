@@ -18,9 +18,10 @@ dayjs.extend(timezone);
 dayjs.extend(advancedFormat);
 
 export function dayjsLocal(dateTimeString) {
-	let localTimezone = dayjs.tz.guess();
-	// dates are stored in Asia/Calcutta timezone on the server
-	return dayjs.tz(dateTimeString, 'Asia/Calcutta').tz(localTimezone);
+	const localTimezone = dayjs.tz.guess();
+	// Server timestamps are UTC; convert to the user's local timezone
+	const base = dateTimeString ? dayjs.utc(dateTimeString) : dayjs.utc();
+	return base.tz(localTimezone);
 }
 
 export function dayjsIST(dateTimeString) {
